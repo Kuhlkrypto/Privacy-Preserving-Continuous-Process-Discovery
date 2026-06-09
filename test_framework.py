@@ -6,13 +6,13 @@ the differentially-private DFG using a **budget-gated** schedule: a
 publication fires only when
 
   (a) the miner's remaining privacy budget ≥ epsilon_per_pub, AND
-  (b) at least ``min_interval`` events have arrived since the last publication.
+  (b) at least ``publish_period`` events have arrived since the last publication.
 
 This avoids the pathological behaviour of a fixed publish-every-N schedule
 where the budget drains after 3 publications (α=0.3) and all subsequent
 snapshots are taken with a noise scale of sensitivity / ε_remaining ≈ ∞.
 
-min_interval defaults to window_size so that the reclaim cycle (~w events)
+publish_period defaults to window_size so that the reclaim cycle (~w events)
 has time to refill the budget before the next snapshot is taken, sustaining
 an indefinite publication rate of roughly one snapshot per window.
 
@@ -53,8 +53,11 @@ Usage
 -----
     python test_framework.py --log-path /home/fabian/Github/data --log-file "Sepsis Cases - Event Log.xes" --window-size 500 --epsilon 1.0 --max-trace-events 30 --output results.json
 
-    # Optionally override the minimum inter-publication interval (default = window_size):
-        --min-interval 300
+    # Optionally override the publishing period (default = window_size):
+        --publish-period 300
+
+    # Set budget fraction α (default 0.4; set to 1/r for sustainable budget):
+        --budget-fraction 0.5
 """
 
 import argparse
@@ -185,18 +188,22 @@ def run_evaluation(
     max_trace_events: int,
     output_path: str,
     noise_threshold: float = 0.1,
-    min_interval: int | None = None,
+    publish_period: int | None = None,
     max_publications: int = 0,
+    budget_fraction: float = 0.4,
 ) -> None:
     """
     Parameters
     ----------
-    min_interval : int, optional
-        Minimum number of events that must have passed since the last publication
-        before a new one is triggered.  Defaults to *window_size* so that the
-        reclaim cycle has time to refill the budget (one publication per window).
+    publish_period : int, optional
+        Publishing period P — number of events between publications.
+        Defaults to *window_size* (one publication per window).  Setting
+        P = W/r yields r publications per window.
     max_publications : int
         Stop after this many publications (useful for smoke tests).
+    budget_fraction : float
+        Fraction α of the current budget spent per publication.
+        Set to 1/r (where r = W/P) for sustainable budget management.
     """
 
     #--------------------------------------------------------
@@ -227,6 +234,7 @@ def run_evaluation(
         max_cases=num_cases,
         max_error_rate=0.01,
         activities=activity_set,
+        budget_fraction=budget_fraction,
     )
     # --- Pre-compute the offline oracle DFG (fixed reference, never changes) ---
     stream.register(miner)
@@ -257,10 +265,10 @@ def run_evaluation(
     # Budget-gated publication schedule.
     # A publication fires when BOTH conditions hold:
     #   1. The remaining budget can cover one more noisy DFG release.
-    #   2. At least min_interval events have accumulated since the last publication
+    #   2. At least publish_period events have accumulated since the last publication
     #      (gives the reclaim mechanism time to restore budget for the next cycle).
-    if min_interval is None:
-        min_interval = window_size   # one publication per window by default
+    if publish_period is None:
+        publish_period = window_size   # one publication per window by default
 
 
 
@@ -273,7 +281,7 @@ def run_evaluation(
     for j, event in enumerate(event_list):
 
         budget_ready    = miner.budget > 0
-        interval_ready  = events_since_publish >= min_interval
+        interval_ready  = events_since_publish >= publish_period
         end_of_stream   = (j == total_events - 1)
 
         if (budget_ready and interval_ready) or end_of_stream:
@@ -534,8 +542,24 @@ def run_evaluation(
     stream.stop()
 
     # --- write results ---
+    output = {
+        "parameters": {
+            "log_path":         log_path,
+            "log_file":         log_file,
+            "window_size":      window_size,
+            "publish_period":   publish_period,
+            "max_trace_events": max_trace_events,
+            "epsilon":          epsilon,
+            "budget_fraction":  budget_fraction,
+            "noise_threshold":  noise_threshold,
+            "total_events":     total_events,
+            "num_activities":   len(activity_set),
+            "num_cases":        num_cases,
+        },
+        "publications": results,
+    }
     with open(output_path, "w", encoding="utf-8") as fh:
-        json.dump(results, fh, indent=2, default=str)
+        json.dump(output, fh, indent=2, default=str)
 
     print(f"\n✓ {publication_index} publications recorded → {output_path}")
 
@@ -569,16 +593,22 @@ def _parse_args() -> argparse.Namespace:
         help="Maximum number of events per case allowed in the window (default: 30).",
     )
     parser.add_argument(
-        "--min-interval", type=int, default=None,
+        "--publish-period", type=int, default=None,
         help=(
-            "Minimum events between publications (default: window_size). "
-            "Must be ≤ window_size to allow budget reclaim. (maybe is not clear as of now)"
-            "Smaller values increase publication frequency but risk budget starvation."
+            "Publishing period P: number of events between publications "
+            "(default: window_size).  Set P = W/r for r publications per window."
+        ),
+    )
+    parser.add_argument(
+        "--budget-fraction", type=float, default=0.4,
+        help=(
+            "Budget fraction α: fraction of current budget spent per publication "
+            "(default: 0.4).  Set to 1/r where r = W/P for sustainable budget."
         ),
     )
     parser.add_argument(
         "--max-publications", type=int, default=100,
-        help="Stop after this many publications (default: 0).",
+        help="Stop after this many publications (default: 100).",
     )
     parser.add_argument(
         "--output", default="results.json",
@@ -596,6 +626,7 @@ if __name__ == "__main__":
         epsilon=args.epsilon,
         max_trace_events=args.max_trace_events,
         output_path=args.output,
-        min_interval=args.min_interval,
+        publish_period=args.publish_period,
         max_publications=args.max_publications,
+        budget_fraction=args.budget_fraction,
     )
