@@ -62,8 +62,11 @@ Usage
 
 import argparse
 import json
+import os
+import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pm4py
@@ -80,8 +83,78 @@ from src.metrics import (compute_dfg_metrics, compute_model_quality, compute_flo
 
 
 # ---------------------------------------------------------------------------
+# Time-based publish interval parsing
+# ---------------------------------------------------------------------------
+
+def parse_publish_interval(interval_str: str) -> timedelta | None:
+    """Parse a human-friendly interval string into a :class:`timedelta`.
+
+    Accepted formats (case-insensitive):
+        ``<number>s``  — seconds  (e.g. ``30s``)
+        ``<number>m``  — minutes  (e.g. ``5m``)
+        ``<number>h``  — hours    (e.g. ``2h``)
+        ``<number>d``  — days     (e.g. ``1d``)
+
+    Returns ``None`` when *interval_str* is ``None`` or empty.
+    """
+    if not interval_str:
+        return None
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*([smhd])', interval_str.strip().lower())
+    if not m:
+        raise ValueError(
+            f"Invalid publish interval '{interval_str}'. "
+            "Use e.g. '30s', '5m', '2h', or '1d'."
+        )
+    value = float(m.group(1))
+    unit = m.group(2)
+    multipliers = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+    return timedelta(seconds=value * multipliers[unit])
+
+
+def _get_event_timestamp(event, timestamp_key: str = "time:timestamp") -> datetime:
+    """Extract a timezone-aware datetime from an event dict."""
+    ts = event.get(timestamp_key) or event.get("time:timestamp")
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
+    # Try parsing ISO format string
+    dt = datetime.fromisoformat(str(ts))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+# ---------------------------------------------------------------------------
 # FullLogRecorder – accumulates every event seen into a growing event log
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Log data loading — separated so callers can pre-compute once for many configs
+# ---------------------------------------------------------------------------
+
+def load_log_data(
+    log_path: str,
+    log_file: str,
+) -> tuple[list, set[str], int]:
+    """Load a XES log and return the data needed by :func:`run_evaluation`.
+
+    Returns
+    -------
+    (event_list, activity_set, num_cases)
+        *event_list* is a ``list`` of event dicts (sorted by timestamp),
+        *activity_set* is the set of unique activity labels,
+        *num_cases* is the number of unique case IDs.
+    """
+    print(f"  Loading log: {log_path}/{log_file} …", flush=True)
+    event_stream, activities, num_cases = utils.get_sample_data(
+        data_path=log_path, file_name=log_file
+    )
+    event_list = list(event_stream)
+    activity_set = set(activities)
+    print(f"    {len(activity_set)} activities, {len(event_list)} events, {num_cases} cases.")
+    return event_list, activity_set, num_cases
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +175,6 @@ def compute_offline_dfg(
     (dfg, start_activities, end_activities)
         All values are plain Python dicts with string-tuple keys / string keys.
     """
-    import os
     print("  [Oracle] Mining offline full-log DFG …", end=" ", flush=True)
     log_df = pm4py.read_xes(os.path.join(log_path, log_file))
     log_df.sort_values(by=["time:timestamp"], ascending=True, inplace=True, kind="mergesort")
@@ -130,7 +202,7 @@ def compute_offline_windowed_dfg(
 
     Unlike :class:`WindowedBinaryCount` (which maintains state incrementally
     via streaming), this function has random access to the full event list and
-    can materialise the perfect window at any publication point without any
+    can materialize the perfect window at any publication point without any
     bloom-filter clipping, trace-limit suppression, or Laplace noise.
 
     This is the *offline windowed oracle* — the theoretical upper bound for
@@ -191,6 +263,13 @@ def run_evaluation(
     publish_period: int | None = None,
     max_publications: int = 0,
     budget_fraction: float = 0.4,
+    publish_interval: str | None = None,
+    time_budget_fraction: float = 0.4,
+    *,
+    precomputed_event_list: list | None = None,
+    precomputed_activity_set: set[str] | None = None,
+    precomputed_num_cases: int | None = None,
+    precomputed_oracle: tuple[dict, dict, dict] | None = None,
 ) -> None:
     """
     Parameters
@@ -204,29 +283,73 @@ def run_evaluation(
     budget_fraction : float
         Fraction α of the current budget spent per publication.
         Set to 1/r (where r = W/P) for sustainable budget management.
+    publish_interval : str, optional
+        Time-based publishing interval using simulated event timestamps.
+        Format: ``<number><unit>`` where unit is s/m/h/d.
+        Examples: ``'30s'``, ``'5m'``, ``'1d'``.
+        When set, publications are triggered by elapsed simulated time
+        rather than event counts.  If multiple periods elapse between
+        two consecutive events, one publication is emitted for **each**
+        elapsed period (even if no new events arrived).
+        Mutually exclusive with ``publish_period``.
+    time_budget_fraction : float
+        Fraction of the total budget to spend per publication when using
+        time-based publishing (default: 0.4).  Only used when
+        ``publish_interval`` is set.
+    precomputed_event_list : list, optional
+        Pre-loaded event list (from :func:`load_log_data`).  When provided
+        together with the other ``precomputed_*`` arguments, the log file
+        is **not** re-read from disk — useful for running many configs in
+        parallel on the same log.
+    precomputed_activity_set : set[str], optional
+        Pre-computed set of activity labels.
+    precomputed_num_cases : int, optional
+        Pre-computed number of unique case IDs.
+    precomputed_oracle : (dfg, sa, ea), optional
+        Pre-computed oracle DFG (from :func:`compute_offline_dfg`).
+        When provided, ``compute_offline_dfg`` is skipped.
     """
 
     #--------------------------------------------------------
     #                      PREAMBLE
     #--------------------------------------------------------
-    print(f"Loading log: {log_path}/{log_file}")
-    event_stream, activities, num_cases = utils.get_sample_data(
-        data_path=log_path, file_name=log_file
-    )
-    # Convert to list for both iteration and random-access slicing
-    # (needed by compute_offline_windowed_dfg at each publication point)
-    event_list   = list(event_stream)
-    activity_set = set(activities)
-    total_events = len(event_list)
-    print(f"  {len(activity_set)} activities, {total_events} events total.")
+    if precomputed_event_list is not None:
+        # Use pre-computed data — avoids re-reading the XES file per worker
+        event_list   = precomputed_event_list
+        activity_set = precomputed_activity_set
+        num_cases    = precomputed_num_cases
+        total_events = len(event_list)
+        print(f"Using pre-loaded log data: {len(activity_set)} activities, "
+              f"{total_events} events, {num_cases} cases.")
+    else:
+        print(f"Loading log: {log_path}/{log_file}")
+        event_list, activity_set, num_cases = load_log_data(log_path, log_file)
+        total_events = len(event_list)
 
-    print("Pre-computing offline oracle DFG from full log …")
-    oracle_dfg, oracle_sa, oracle_ea = compute_offline_dfg(log_path, log_file, activity_set)
+    if precomputed_oracle is not None:
+        oracle_dfg, oracle_sa, oracle_ea = precomputed_oracle
+        print(f"Using pre-computed oracle DFG ({len(oracle_dfg)} edges).")
+    else:
+        print("Pre-computing offline oracle DFG from full log …")
+        oracle_dfg, oracle_sa, oracle_ea = compute_offline_dfg(log_path, log_file, activity_set)
+    # --- Parse time-based publishing interval ---
+    time_interval = parse_publish_interval(publish_interval)
+    use_time_based = time_interval is not None
+    if use_time_based and publish_period is not None:
+        print("  [WARN] Both publish_interval and publish_period set; "
+              "using time-based publishing (publish_interval).", file=sys.stderr)
+    if use_time_based:
+        print(f"  Time-based publishing: interval={time_interval}, "
+              f"time_budget_fraction={time_budget_fraction}")
+
     stream = PausableLiveEventStream()
     #--------------------------------------------------------
     #                      MINER AND BASELINE(S) SETUP
     #--------------------------------------------------------
     # --- set up streaming components ---
+    # When time-based publishing is active, override budget_fraction with
+    # time_budget_fraction so each publication uses the configured share.
+    effective_budget_fraction = time_budget_fraction if use_time_based else budget_fraction
     miner    = PrivateMiner.apply(
         window_size,
         epsilon,
@@ -234,14 +357,14 @@ def run_evaluation(
         max_cases=num_cases,
         max_error_rate=0.01,
         activities=activity_set,
-        budget_fraction=budget_fraction,
+        budget_fraction=effective_budget_fraction,
     )
     # --- Pre-compute the offline oracle DFG (fixed reference, never changes) ---
     stream.register(miner)
 
     # Non-private accumulating baseline — same growing scope as the private AggDFG;
     # fair peer comparison that isolates the DP cost of the accumulated result.
-    baseline_full_log_cf = DefaultDFGDiscoveryCF.apply(activities=activities)
+    baseline_full_log_cf = DefaultDFGDiscoveryCF.apply(activities=activity_set)
     stream.register(baseline_full_log_cf)
     # Non-private windowed peer baseline — same window slice as the private miner, no noise, no bloom filter
     windowed_baseline_cf    = WindowedBaselineCF(window_size=window_size, activities=activity_set)
@@ -267,7 +390,7 @@ def run_evaluation(
     #   1. The remaining budget can cover one more noisy DFG release.
     #   2. At least publish_period events have accumulated since the last publication
     #      (gives the reclaim mechanism time to restore budget for the next cycle).
-    if publish_period is None:
+    if not use_time_based and publish_period is None:
         publish_period = window_size   # one publication per window by default
 
 
@@ -278,13 +401,48 @@ def run_evaluation(
     events_since_publish = 0
     publication_index    = 0
 
+    # --- Time-based state ---
+    # next_publish_time: the simulated timestamp at which the next publication
+    # is due.  Initialised from the first event's timestamp.
+    next_publish_time: datetime | None = None
+
     for j, event in enumerate(event_list):
 
-        budget_ready    = miner.budget > 0
-        interval_ready  = events_since_publish >= publish_period
-        end_of_stream   = (j == total_events - 1)
+        # --- Determine how many publications are due BEFORE processing this event ---
+        # For time-based mode: check if one or more periods have elapsed since the
+        # last publication, using the *current* event's timestamp.
+        pubs_due = 0
+        end_of_stream = (j == total_events - 1)
 
-        if (budget_ready and interval_ready) or end_of_stream:
+        if use_time_based:
+            event_ts = _get_event_timestamp(event)
+            if next_publish_time is None:
+                # First event: schedule the first publication after one interval
+                next_publish_time = event_ts + time_interval
+            # Count how many full periods have elapsed
+            while event_ts >= next_publish_time:
+                pubs_due += 1
+                next_publish_time += time_interval
+        else:
+            budget_ready   = miner.budget > 0
+            interval_ready = events_since_publish >= publish_period
+            if budget_ready and interval_ready:
+                pubs_due = 1
+
+        # Also publish at end-of-stream regardless of mode
+        if end_of_stream and pubs_due == 0:
+            pubs_due = 1
+
+
+
+        #_______________________________________________________________________-
+        #
+        #   ACTUAL PUBLICATION LOOP
+        #
+        #____________________________________________________________--___________
+        for _pub_iter in range(pubs_due):
+            if miner.budget <= 0:
+                break
             stream.pause()
             print(f"\n[Publication #{publication_index}]  events seen: {j}")
 
@@ -315,7 +473,7 @@ def run_evaluation(
 
             # FLOW CORRECTED DFG
             # process to dfg with correct flow ( sum(in) = sum(out) )
-            noisy_dfg = utils.optimize_flow(raw_noisy_dfg, set(activities))
+            noisy_dfg = utils.optimize_flow(raw_noisy_dfg, activity_set)
             noisy_clean, noisy_clean_sa, noisy_clean_ea = utils.remove_dummy_start_and_end_transitions(noisy_dfg)
 
             # --------------------------------------------------------
@@ -323,7 +481,7 @@ def run_evaluation(
             # --------------------------------------------------------
             # Pass the unnoised DFG through the exact same Kirchhoff optimization.
             # This is the perfect baseline: the exact same algorithm without Laplace noise.
-            unnoised_flow_dfg = utils.optimize_flow(unnoised_dfg, set(activities))
+            unnoised_flow_dfg = utils.optimize_flow(unnoised_dfg, activity_set)
             unnoised_clean, unnoised_clean_sa, unnoised_clean_ea = utils.remove_dummy_start_and_end_transitions(unnoised_flow_dfg)
             # Guard: an empty window produces a 0-edge DFG whose 100% precision / 0% recall
             # is meaningless — mark all downstream metrics as None instead.
@@ -536,26 +694,37 @@ def run_evaluation(
 
             stream.resume()
 
+        # Break out of outer event loop if max publications reached
+        if max_publications and publication_index >= max_publications:
+            break
+
         stream.append(event)
         events_since_publish += 1
 
     stream.stop()
 
     # --- write results ---
+    params_out: dict[str, Any] = {
+        "log_path":         log_path,
+        "log_file":         log_file,
+        "window_size":      window_size,
+        "max_trace_events": max_trace_events,
+        "epsilon":          epsilon,
+        "noise_threshold":  noise_threshold,
+        "total_events":     total_events,
+        "num_activities":   len(activity_set),
+        "num_cases":        num_cases,
+    }
+    if use_time_based:
+        params_out["publish_interval"]      = publish_interval
+        params_out["time_budget_fraction"]   = time_budget_fraction
+        params_out["effective_budget_fraction"] = effective_budget_fraction
+    else:
+        params_out["publish_period"]    = publish_period
+        params_out["budget_fraction"]   = budget_fraction
+
     output = {
-        "parameters": {
-            "log_path":         log_path,
-            "log_file":         log_file,
-            "window_size":      window_size,
-            "publish_period":   publish_period,
-            "max_trace_events": max_trace_events,
-            "epsilon":          epsilon,
-            "budget_fraction":  budget_fraction,
-            "noise_threshold":  noise_threshold,
-            "total_events":     total_events,
-            "num_activities":   len(activity_set),
-            "num_cases":        num_cases,
-        },
+        "parameters": params_out,
         "publications": results,
     }
     with open(output_path, "w", encoding="utf-8") as fh:
@@ -611,6 +780,23 @@ def _parse_args() -> argparse.Namespace:
         help="Stop after this many publications (default: 100).",
     )
     parser.add_argument(
+        "--publish-interval", type=str, default=None,
+        help=(
+            "Time-based publishing interval using simulated event timestamps.  "
+            "Format: <number><unit> where unit is s (seconds), m (minutes), "
+            "h (hours), or d (days).  Examples: '30s', '5m', '1d'.  "
+            "When set, publications are triggered by elapsed simulated time.  "
+            "Overrides --publish-period."
+        ),
+    )
+    parser.add_argument(
+        "--time-budget-fraction", type=float, default=0.4,
+        help=(
+            "Fraction of the total budget spent per publication when using "
+            "time-based publishing (default: 0.4).  Only used with --publish-interval."
+        ),
+    )
+    parser.add_argument(
         "--output", default="results.json",
         help="Path of the output JSON file (default: results.json).",
     )
@@ -629,4 +815,6 @@ if __name__ == "__main__":
         publish_period=args.publish_period,
         max_publications=args.max_publications,
         budget_fraction=args.budget_fraction,
+        publish_interval=args.publish_interval,
+        time_budget_fraction=args.time_budget_fraction,
     )

@@ -206,7 +206,6 @@ def _prepare_for_inductive(
 
     if not clean:
         return None, None, None
-
     # 3: restrict sa/ea to activities still in the graph
     reachable = {a for edge in clean for a in edge}
     clean_sa = {a: int(round(c)) for a, c in sa.items()
@@ -251,26 +250,25 @@ def _try_model_quality(log, dfg: dict, sa: dict, ea: dict,
 
     try:
         if miner_type == "inductive":
-            im_dfg, im_sa, im_ea = _prepare_for_inductive(dfg, sa, ea, noise_thresh)
-            if im_dfg is None:
+            # im_dfg, im_sa, im_ea = _prepare_for_inductive(dfg, sa, ea, noise_thresh)
+            if dfg is None:
                 print("  [WARN] inductive: DFG empty after noise-thresholding.",
                       file=sys.stderr)
                 return empty
-            dfg_obj = DFG(im_dfg, im_sa, im_ea)
-            tree    = pm4py.discover_process_tree_inductive(dfg_obj)
+            dfg_obj = DFG(dfg, sa, ea)
+            tree    = pm4py.discover_process_tree_inductive(dfg_obj, noise_threshold=noise_thresh)
             net, im, fm = pm4py.convert_to_petri_net(tree)
         elif miner_type == "heuristic":
             net, im, fm = heuristic_discovery.apply_dfg(
                 dfg,
                 start_activities=sa,
                 end_activities=ea,
-                parameters={HeuristicParameters.DFG_PRE_CLEANING_NOISE_THRESH: 0.0},
             )
         else:
             raise ValueError(f"Unknown miner_type: {miner_type!r}")
 
-        fitness        = pm4py.fitness_token_based_replay(log, net, im, fm)["log_fitness"]
-        precision      = pm4py.precision_token_based_replay(log, net, im, fm)
+        fitness        = pm4py.fitness_alignments(log, net, im, fm, multi_processing=True)["log_fitness"]
+        precision      = pm4py.precision_alignments(log, net, im, fm, multi_processing=True)
         generalization = pm4py.generalization_tbr(log, net, im, fm)
         simplicity     = pm4py.simplicity_petri_net(net, im, fm)
         f1             = f_beta(fitness, precision)
