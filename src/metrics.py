@@ -250,13 +250,13 @@ def _try_model_quality(log, dfg: dict, sa: dict, ea: dict,
 
     try:
         if miner_type == "inductive":
-            # im_dfg, im_sa, im_ea = _prepare_for_inductive(dfg, sa, ea, noise_thresh)
+            im_dfg, im_sa, im_ea = _prepare_for_inductive(dfg, sa, ea, noise_thresh)
             if dfg is None:
                 print("  [WARN] inductive: DFG empty after noise-thresholding.",
                       file=sys.stderr)
                 return empty
-            dfg_obj = DFG(dfg, sa, ea)
-            tree    = pm4py.discover_process_tree_inductive(dfg_obj, noise_threshold=noise_thresh)
+            dfg_obj = DFG(im_dfg, im_sa, im_ea)
+            tree    = pm4py.discover_process_tree_inductive(dfg_obj)
             net, im, fm = pm4py.convert_to_petri_net(tree)
         elif miner_type == "heuristic":
             net, im, fm = heuristic_discovery.apply_dfg(
