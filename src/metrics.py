@@ -267,8 +267,8 @@ def _try_model_quality(log, dfg: dict, sa: dict, ea: dict,
         else:
             raise ValueError(f"Unknown miner_type: {miner_type!r}")
 
-        fitness        = pm4py.fitness_token_based_replay(log, net, im, fm)["log_fitness"]
-        precision      = pm4py.precision_token_based_replay(log, net, im, fm)
+        fitness        = pm4py.fitness_alignments(log, net, im, fm)["log_fitness"]
+        precision      = pm4py.precision_alignments(log, net, im, fm)
         generalization = pm4py.generalization_tbr(log, net, im, fm)
         simplicity     = pm4py.simplicity_petri_net(net, im, fm)
         f1             = f_beta(fitness, precision)
