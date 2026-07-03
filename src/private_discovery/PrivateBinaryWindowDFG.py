@@ -150,6 +150,10 @@ class PrivateStreamingDFGMinerSlidingWindow(StreamingAlgorithm, AggDFG):
             del self.case_start_activity[old_case]
             self.start_activities[old_act] -= 1
 
+            # every user only has one start activity so add it to the Bloom Filter at this point
+            self.finished_cases.add(old_case)
+
+
         # 2. Decrease per-case event count
         self.case_event_counts[old_case] -= 1
 
@@ -160,16 +164,13 @@ class PrivateStreamingDFGMinerSlidingWindow(StreamingAlgorithm, AggDFG):
                 self.edge_count[old_edge] -= 1
                 del self.case_edge_counts[old_case][old_edge]
 
-        # 4. If the user has no events left in the window, their first event just left →
-        #    add to bloom filter to guarantee w-event privacy for all their events.
+        #  clean up if all events of a case left
         if self.case_event_counts[old_case] == 0:
             del self.case_event_counts[old_case]
             if old_case in self.case_edge_counts:
                 del self.case_edge_counts[old_case]
             if old_case in self.user_states:
                 del self.user_states[old_case]
-            # Every event of this user was within one window → w-event privacy holds.
-            self.finished_cases.add(old_case)
 
     # ------------------------------------------------------------------
     # StreamingAlgorithm interface
