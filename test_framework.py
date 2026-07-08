@@ -568,24 +568,20 @@ def run_evaluation(
             #                      METRICS MODEL QUALITY
             # --------------------------------------------------------
             print("  Model quality (oracle DFG, full log):")
-            mq_oracle_full = compute_model_quality(seen_log, oracle_dfg, oracle_sa, oracle_ea,
-                                                   noise_thresh=0.0)
+            mq_oracle_full = compute_model_quality(seen_log, oracle_dfg, oracle_sa, oracle_ea)
 
             # ---------- model quality — accumulating non-private baseline (peer for AggDFG) ----------
             print("  Model quality (accumulating baseline, full log):")
-            mq_baseline_full = compute_model_quality(seen_log, base_dfg, base_sa, base_ea,
-                                                     noise_thresh=0.0)
+            mq_baseline_full = compute_model_quality(seen_log, base_dfg, base_sa, base_ea)
 
             # ---------- model quality — offline windowed oracle ----------
             # Evaluated on the windowed log (same scope as the DFG).
             print("  Model quality (offline windowed oracle, windowed log):")
-            mq_offwin_win = compute_model_quality(win_log, offwin_dfg, offwin_sa, offwin_ea,
-                                                  noise_thresh=0.0)
+            mq_offwin_win = compute_model_quality(win_log, offwin_dfg, offwin_sa, offwin_ea)
 
             # ---------- model quality — non-private windowed peer baseline ----------
             print("  Model quality (windowed baseline, windowed log):")
-            mq_windowed_win  = compute_model_quality(win_log, win_base_dfg, win_base_sa, win_base_ea,
-                                                     noise_thresh=0.0)
+            mq_windowed_win  = compute_model_quality(win_log, win_base_dfg, win_base_sa, win_base_ea)
 
             # ---------- model quality (noisy window DFG)  ----------
             print("  Model quality (noisy window DFG, windowed log):")

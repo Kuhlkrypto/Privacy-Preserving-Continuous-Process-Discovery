@@ -14,7 +14,7 @@ Parameter grid
   W  (window size)       :  1 %, 5 %, 10 % of total events N
   r  (W / P ratio)       :  1, 2, 5
   P  (publish period)    :  W / r   (number of events between publications)
-  L  (max trace events)  :  75th, 90th, 100th percentile of trace lengths
+  L  (max trace events)  :  75th, 90th, 100th quantiles of trace lengths
   α  (budget fraction)   :  1 / r   (ensures sustainable budget under reclaim)
 
 Output layout
