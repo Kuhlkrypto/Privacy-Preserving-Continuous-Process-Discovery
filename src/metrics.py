@@ -17,19 +17,17 @@ def mean_absolute_error(y_true: dict[str, int | float], y_pred: dict[str, int | 
     return sum(absolute_error) / len(y_true)
 
 
-def mean_relative_error(y_true: dict[str, int | float], y_pred: dict[str, int | float], activities: set = None):
+def mean_relative_error(y_true, y_pred, activities=None):
     if activities is None:
         activities = y_true.keys()
-    if len(y_true) == 0:
-        return 0
-    denominator = sum(y_true.values())
-    if denominator == 0:
-        return float('inf')
-    else:
-        nominator = sum([abs(y_true.get(k,0) - y_pred.get(k,0)) for k in activities])
-        return nominator / denominator
 
+    errors = []
+    for k in activities:
+        true = y_true.get(k, 0)
+        if true != 0:
+            errors.append(abs(true - y_pred.get(k, 0)) / abs(true))
 
+    return sum(errors) / len(errors) if errors else float("nan")
 def f_beta(recall: float, precision: float, beta: int = 1) -> float:
     beta = math.pow(beta, 2)
     denominator = (beta * precision + recall)
