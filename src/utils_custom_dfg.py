@@ -141,17 +141,34 @@ def optimize_flow(dfr: dict[tuple[str, str], int | float], all_nodes: set[str],
 
     Weights are w_e = 1/(|c_e| + 1) so that high-count edges are anchored more
     strongly than near-zero edges (which may be noise artefacts).
+
+    Pre-processing: edges with count ≤ 0 are removed before the QP is built.
+    Keeping negative-valued edges (Laplace noise artefacts) as QP targets would
+    force the solver to assign small positive flows to phantom edges in order to
+    satisfy the flow-conservation constraints — producing spurious graph structure.
+    Edges that had no positive evidence are simply absent from the output.
     """
     inner_nodes = [n for n in all_nodes if n != start and n != end]
 
-    # decision variables (one per edge, non-negative)
-    edge_vars = {edge: cp.Variable(nonneg=True) for edge in dfr.keys()}
+    # --- Drop edges with no positive evidence before building the QP. ---
+    # Negative counts are Laplace noise artefacts: including them as QP targets
+    # (with the nonneg constraint forcing x ≥ 0) makes the solver minimise
+    # "distance to a negative value" by setting those variables to small positive
+    # numbers, which in turn corrupts the flow-conservation constraints and
+    # introduces phantom edges into the result.
+    dfr_positive = {edge: value for edge, value in dfr.items() if value > 0}
+
+    if not dfr_positive:
+        return {}   # nothing to optimise
+
+    # decision variables (one per *positive* edge only)
+    edge_vars = {edge: cp.Variable(nonneg=True) for edge in dfr_positive.keys()}
 
     # weighted least-squares objective
-    # w = 1/(|value|+1): large counts are anchored; zero/near-zero counts can move freely
+    # w = 1/(|value|+1): large counts are anchored; near-zero counts can move freely
     objective_terms = [
         cp.square((edge_vars[edge] - value) * (1.0 / (abs(value) + 1.0)))
-        for edge, value in dfr.items()
+        for edge, value in dfr_positive.items()
     ]
     objective = cp.Minimize(cp.sum(objective_terms))
 
@@ -159,14 +176,14 @@ def optimize_flow(dfr: dict[tuple[str, str], int | float], all_nodes: set[str],
 
     # --- Per-node flow conservation (inner nodes only) ---
     for node in inner_nodes:
-        in_edges  = [edge_vars[e] for e in dfr.keys() if e[1] == node]
-        out_edges = [edge_vars[e] for e in dfr.keys() if e[0] == node]
+        in_edges  = [edge_vars[e] for e in dfr_positive.keys() if e[1] == node]
+        out_edges = [edge_vars[e] for e in dfr_positive.keys() if e[0] == node]
         if in_edges or out_edges:
             constraints.append(cp.sum(in_edges) == cp.sum(out_edges))
 
     # --- Global source-sink balance: total flow from START == total flow into END ---
-    start_out = [edge_vars[e] for e in dfr.keys() if e[0] == start]
-    end_in    = [edge_vars[e] for e in dfr.keys() if e[1] == end]
+    start_out = [edge_vars[e] for e in dfr_positive.keys() if e[0] == start]
+    end_in    = [edge_vars[e] for e in dfr_positive.keys() if e[1] == end]
     if start_out and end_in:
         constraints.append(cp.sum(start_out) == cp.sum(end_in))
 
@@ -174,9 +191,9 @@ def optimize_flow(dfr: dict[tuple[str, str], int | float], all_nodes: set[str],
     prob.solve()
 
     if prob.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
-        print(f"[optimize_flow] Solver returned status '{prob.status}' — returning original DFG.",
+        print(f"[optimize_flow] Solver returned status '{prob.status}' — returning filtered DFG.",
               file=sys.stderr)
-        return {edge: float(max(0, v)) for edge, v in dfr.items()}
+        return {edge: float(v) for edge, v in dfr_positive.items()}
 
     clean_dfg = {}
     for edge, var in edge_vars.items():
