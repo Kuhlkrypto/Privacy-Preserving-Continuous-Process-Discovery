@@ -87,7 +87,7 @@ def apply_laplace_noise(dfg: dict[tuple[str, str], int], sensitivity: float, e_b
     print(f"--- DEBUG: Sensitivity={sensitivity}, Scale={scale}, Epsilon={e_budget} ---")
     rng = np.random.default_rng()
 
-    dp_dfg = {edge: max(0, count + int(rng.laplace(loc=0.0, scale=scale, size=1)[0])) for edge, count in
+    dp_dfg = {edge: count + int(rng.laplace(loc=0.0, scale=scale, size=1)[0]) for edge, count in
               dfg.items()}
 
     return dp_dfg
