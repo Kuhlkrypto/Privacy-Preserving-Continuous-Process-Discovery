@@ -54,16 +54,14 @@ class StreamingDFGDiscoveryBinaryCount(StreamingAlgorithm):
         self.s_act[activity] = self.s_act.get(activity, 0) + 1
 
     def _add_edge(self, edge: tuple[str, str], case: str):
-        # no circles (edge from activity to the same activity)
-        if edge[0] != edge[1]:
-            # add the new case to the set, the set properties will ensure only unique sets, else create a fresh set
-            if edge not in self.edges.keys():
-                self.edges[edge] = {case}
-            else:
-                self.edges.get(edge).add(case)
+
+        # add the new case to the set, the set properties will ensure only unique sets, else create a fresh set
+        if edge not in self.edges.keys():
+            self.edges[edge] = {case}
+        else:
+            self.edges.get(edge).add(case)
 
     def _add_activity(self, activity: str, case: str):
-        # tillägg en ny aktivität till mängden
         if self.activities.get(activity) is None:
             self.activities[activity] = {case}
         else:
