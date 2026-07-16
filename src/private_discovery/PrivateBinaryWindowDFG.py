@@ -289,11 +289,11 @@ class PrivateStreamingDFGMinerSlidingWindow(StreamingAlgorithm, AggDFG):
         s_e = dict(Counter(s_e.values()))
 
         utils.add_dummy_start_and_end_transitions(dfr, s_a, s_e)
-        super().aggregate_dfg(dfr)
 
         dp_dfg = self._publish_noisy_dfg(dfr)
         if dp_dfg is None:
             return {}, {}, {}, {}
+        super().aggregate_dfg(dp_dfg)
 
         return dfr, dp_dfg, s_a, s_e
 
