@@ -364,8 +364,10 @@ def run_evaluation(
 
     # Non-private accumulating baseline — same growing scope as the private AggDFG;
     # fair peer comparison that isolates the DP cost of the accumulated result.
-    baseline_full_log_cf = DefaultDFGDiscoveryCF.apply(activities=activity_set)
-    stream.register(baseline_full_log_cf)
+    # We maintain an accumulated window baseline to perfectly mirror AggDFG.
+    accum_base_dfg = defaultdict(int)
+    accum_base_sa = defaultdict(int)
+    accum_base_ea = defaultdict(int)
     # Non-private windowed peer baseline — same window slice as the private miner, no noise, no bloom filter
     windowed_baseline_cf    = WindowedBaselineCF(window_size=window_size, activities=activity_set)
     stream.register(windowed_baseline_cf)
@@ -493,13 +495,6 @@ def run_evaluation(
             # build start/end from the noisy current-window DFG
             raw_noisy_clean, raw_noisy_sa, raw_noisy_ea = utils.remove_dummy_start_and_end_transitions(dict(raw_noisy_dfg))
 
-            # ---------- accumulating non-private baseline (peer for quality_accumulated_dfg) ----------
-            baseline_result = baseline_full_log_cf.get()
-            if baseline_result is None:
-                base_dfg, base_sa, base_ea = {}, {}, {}
-            else:
-                base_dfg, _base_act, base_sa, base_ea = baseline_result
-
             # ---------- offline windowed oracle (non-private, random-access window) ----------
             # Perfect window DFG computed from event_list[j-w:j] — no noise,
             # no bloom-filter, no trace-limit clipping.
@@ -514,6 +509,19 @@ def run_evaluation(
                 win_base_dfg, win_base_sa, win_base_ea = {}, {}, {}
             else:
                 win_base_dfg, _win_base_act, win_base_sa, win_base_ea = win_baseline_result
+
+            # ---------- accumulating non-private baseline (peer for quality_accumulated_dfg) ----------
+            # Accumulate the current window baseline to perfectly match AggDFG mechanics (Window-Sum Baseline)
+            for edge, count in win_base_dfg.items():
+                accum_base_dfg[edge] += count
+            for act, count in win_base_sa.items():
+                accum_base_sa[act] += count
+            for act, count in win_base_ea.items():
+                accum_base_ea[act] += count
+
+            base_dfg = dict(accum_base_dfg)
+            base_sa = dict(accum_base_sa)
+            base_ea = dict(accum_base_ea)
 
             # ---------- logs ----------
             win_log  = win_rec.get() # the current event window
@@ -568,7 +576,7 @@ def run_evaluation(
             #                      METRICS MODEL QUALITY
             # --------------------------------------------------------
             print("  Model quality (oracle DFG, full log):")
-            mq_oracle_full = compute_model_quality(seen_log, oracle_dfg, oracle_sa, oracle_ea)
+            mq_oracle_full = compute_model_quality(seen_log, oracle_dfg, oracle_sa, oracle_ea, noise_thresh=0.0)
 
             # ---------- model quality — accumulating non-private baseline (peer for AggDFG) ----------
             print("  Model quality (accumulating baseline, full log):")
@@ -577,7 +585,7 @@ def run_evaluation(
             # ---------- model quality — offline windowed oracle ----------
             # Evaluated on the windowed log (same scope as the DFG).
             print("  Model quality (offline windowed oracle, windowed log):")
-            mq_offwin_win = compute_model_quality(win_log, offwin_dfg, offwin_sa, offwin_ea)
+            mq_offwin_win = compute_model_quality(win_log, offwin_dfg, offwin_sa, offwin_ea, noise_thresh=0.0)
 
             # ---------- model quality — non-private windowed peer baseline ----------
             print("  Model quality (windowed baseline, windowed log):")
