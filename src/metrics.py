@@ -204,12 +204,19 @@ def _prepare_for_inductive(
 
     if not clean:
         return None, None, None
-    # 3: restrict sa/ea to activities still in the graph
+    # 3: restrict sa/ea to activities that either appear in the filtered graph
+    #    OR have a non-zero count themselves (activities with only low-freq outgoing
+    #    edges may still be valid start/end nodes after thresholding).
     reachable = {a for edge in clean for a in edge}
+    # Also include activities present in sa/ea even if their edges were all thresholded,
+    # so that sparse non-private DFGs (e.g. early accumulating baselines) still yield
+    # a valid model rather than returning None.
+    reachable_sa = reachable | {a for a, c in sa.items() if c > 0}
+    reachable_ea = reachable | {a for a, c in ea.items() if c > 0}
     clean_sa = {a: int(round(c)) for a, c in sa.items()
-                if a in reachable and round(c) > 0}
+                if a in reachable_sa and round(c) > 0}
     clean_ea = {a: int(round(c)) for a, c in ea.items()
-                if a in reachable and round(c) > 0}
+                if a in reachable_ea and round(c) > 0}
 
     if not clean_sa or not clean_ea:
         return None, None, None
@@ -249,7 +256,7 @@ def _try_model_quality(log, dfg: dict, sa: dict, ea: dict,
     try:
         if miner_type == "inductive":
             im_dfg, im_sa, im_ea = _prepare_for_inductive(dfg, sa, ea, noise_thresh)
-            if dfg is None:
+            if im_dfg is None:
                 print("  [WARN] inductive: DFG empty after noise-thresholding.",
                       file=sys.stderr)
                 return empty
