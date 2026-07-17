@@ -426,8 +426,17 @@ def run_evaluation(
                 pubs_due += 1
                 next_publish_time += time_interval
         else:
-            budget_ready   = miner.budget > 0
             interval_ready = events_since_publish >= publish_period
+            if interval_ready:
+                # Flush the stream before reading the budget so that all
+                # asynchronously-processed events (and their budget reclaims)
+                # are committed.  Without this, the main loop can race far
+                # ahead of the thread pool: reclaims from ~W events ago have
+                # not yet updated miner.budget, causing r=1 (alpha=1.0)
+                # configurations to stall and produce far fewer publications
+                # than expected.
+                stream.flush()
+            budget_ready   = miner.budget > 0
             if budget_ready and interval_ready:
                 pubs_due = 1
 
