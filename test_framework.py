@@ -700,7 +700,7 @@ def run_evaluation(
             publication_index    += 1
             events_since_publish  = 0
 
-            if publication_index >= max_publications:
+            if max_publications is not None and publication_index >= max_publications:
                 print(f"  Reached max_publications={max_publications}; stopping.")
                 stream.resume()
                 break
@@ -708,7 +708,7 @@ def run_evaluation(
             stream.resume()
 
         # Break out of outer event loop if max publications reached
-        if max_publications and publication_index >= max_publications:
+        if max_publications is not None and publication_index >= max_publications:
             break
 
         stream.append(event)

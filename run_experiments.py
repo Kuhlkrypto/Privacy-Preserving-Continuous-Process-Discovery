@@ -372,8 +372,8 @@ def main():
         help="Total privacy budget ε (default: 1.0).",
     )
     parser.add_argument(
-        "--max-publications", type=int, default=100,
-        help="Max publications per run (default: 100).",
+        "--max-publications", type=int, default=None,
+        help="Max publications per run (default: unlimited, i.e. run until stream is exhausted).",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
