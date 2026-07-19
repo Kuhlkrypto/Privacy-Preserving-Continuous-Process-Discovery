@@ -227,7 +227,7 @@ def generate_time_configs(stats: dict, epsilon: float) -> list[dict]:
 
             r_time = W_time_seconds / interval_seconds if interval_seconds > 0 else 1
             alpha_time = 1.0 / max(1, round(r_time))
-            alpha_time = max(0.05, min(alpha_time, 1.0))
+            alpha_time = max(0.05, min(alpha_time, 0.9))
 
             for q_label, _q_val in TRACE_QUANTILES:
                 L = min(quantiles[q_label], W)
@@ -263,7 +263,7 @@ def generate_time_configs(stats: dict, epsilon: float) -> list[dict]:
 
             r_time = W_time_seconds / interval_seconds if interval_seconds > 0 else 1
             alpha_time = 1.0 / max(1, round(r_time))
-            alpha_time = max(0.05, min(alpha_time, 1.0))
+            alpha_time = max(0.05, min(alpha_time, 0.9))
 
             for q_label, _q_val in TRACE_QUANTILES:
                 L = min(quantiles[q_label], W)

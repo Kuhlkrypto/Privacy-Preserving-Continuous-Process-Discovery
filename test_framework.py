@@ -451,8 +451,14 @@ def run_evaluation(
         #   ACTUAL PUBLICATION LOOP
         #
         #____________________________________________________________--___________
+        if pubs_due > 0:
+            # Flush the stream before attempting to publish to ensure all
+            # asynchronous budget reclaims have been processed.
+            stream.flush()
+
         for _pub_iter in range(pubs_due):
             if miner.budget <= 0:
+                print(f"  [WARN] Skipping publication: budget exhausted (budget={miner.budget:.4f}).", file=sys.stderr)
                 break
             stream.pause()
             print(f"\n[Publication #{publication_index}]  events seen: {j}")
