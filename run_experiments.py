@@ -74,10 +74,10 @@ TRACE_QUANTILES    = [                          # (label, quantile)
 ]
 
 # ── Time-based grid knobs ────────────────────────────────────────────────────
-TIME_PUB_COUNTS      = [20, 50, 100]               # data-derived: ~N publications over the log
+TIME_PUB_COUNTS      = []               # data-derived: ~N publications over the log
 TIME_FIXED_INTERVALS = ["10d", "5d", "1d"]           # fixed calendar intervals
-TIME_MIN_PUBS        = 5                             # skip combos producing fewer publications
-TIME_MAX_PUBS        = 200                           # skip combos producing more publications
+TIME_MIN_PUBS        = 1                             # skip combos producing fewer publications
+TIME_MAX_PUBS        = 10000                           # skip combos producing more publications
 
 INPUT_DIR  = os.path.join("data", "input")
 OUTPUT_DIR = os.path.join("data", "output")
