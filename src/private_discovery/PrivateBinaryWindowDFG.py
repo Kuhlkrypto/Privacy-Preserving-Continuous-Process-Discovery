@@ -231,7 +231,7 @@ class PrivateStreamingDFGMinerSlidingWindow(StreamingAlgorithm, AggDFG):
         capped by the total number of possible edges (A² + 2A including start/end arcs).
         """
         max_possible = self.num_activities ** 2 + 2 * self.num_activities
-        return min(max_possible, self.trace_limit - 1)
+        return min(max_possible, self.trace_limit + 1)
 
     def _publish_noisy_dfg(self, dfg: dict) -> dict | None:
         """
