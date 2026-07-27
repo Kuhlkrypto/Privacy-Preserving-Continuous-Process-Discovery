@@ -27,7 +27,7 @@ The repository is organized into the following key components:
 To run the simulator and visualization scripts, you will need Python installed along with the required packages:
 
 ```bash
-cd Simulator
+cd Privacy-Preserving-Continuous-Process-Discovery
 pip install -r requirements.txt
 # Alternatively, you can use uv: uv pip install -r requirements.txt
 ```
@@ -36,7 +36,7 @@ pip install -r requirements.txt
 
 To run the DP streaming pipeline evaluations on your event logs:
 ```bash
-cd Simulator
+cd Privacy-Preserving-Continuous-Process-Discovery
 python run_experiments.py
 ```
 
